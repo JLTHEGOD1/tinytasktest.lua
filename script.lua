@@ -1,21 +1,28 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
 local recording = false
 local replaying = false
-local clicks = {}
-local loopReplay = false
+local actions = {}
 local startTime = 0
 
+-- Remote for 3D clicks
 local ClickRemote = ReplicatedStorage:FindFirstChild("ClickRemote")
+if not ClickRemote then
+    ClickRemote = Instance.new("RemoteEvent")
+    ClickRemote.Name = "ClickRemote"
+    ClickRemote.Parent = ReplicatedStorage
+end
 
+-- GUI
 local ScreenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
 local Frame = Instance.new("Frame", ScreenGui)
-Frame.Size = UDim2.new(0, 200, 0, 120)
+Frame.Size = UDim2.new(0, 220, 0, 160)
 Frame.Position = UDim2.new(0.05, 0, 0.2, 0)
 Frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
 Frame.Active = true
@@ -31,7 +38,7 @@ RecordBtn.TextColor3 = Color3.new(1,1,1)
 local ReplayBtn = Instance.new("TextButton", Frame)
 ReplayBtn.Size = UDim2.new(1, -10, 0, 30)
 ReplayBtn.Position = UDim2.new(0, 5, 0, 40)
-ReplayBtn.Text = "Replay"
+ReplayBtn.Text = "Replay (Loop)"
 ReplayBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
 ReplayBtn.TextColor3 = Color3.new(1,1,1)
 
@@ -49,90 +56,125 @@ TimerLabel.BackgroundTransparency = 1
 TimerLabel.Text = "Timer: 0s"
 TimerLabel.TextColor3 = Color3.new(1,1,1)
 
-mouse.Button1Down:Connect(function()
-	if recording then
-		local target = mouse.Target
-		local guiTarget = mouse.Target and mouse.Target:FindFirstAncestorWhichIsA("GuiButton")
-		table.insert(clicks, {
-			time = tick(),
-			gui = guiTarget,
-			part = target
-		})
-		if guiTarget then
-			print("Recorded GUI click:", guiTarget.Name)
-		elseif target then
-			print("Recorded 3D click on:", target.Name)
-		else
-			print("Recorded click on empty space")
-		end
-	end
-end)
+-- Fake cursors
+local fakeCursor = Instance.new("Frame", ScreenGui)
+fakeCursor.Size = UDim2.new(0, 8, 0, 8)
+fakeCursor.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+fakeCursor.Visible = false
 
-local function ToggleRecording()
-	if recording then
-		recording = false
-		RecordBtn.Text = "Start Recording"
-		print("Stopped recording. Total clicks:", #clicks)
-	else
-		clicks = {}
-		recording = true
-		startTime = tick()
-		RecordBtn.Text = "Stop Recording"
-		print("Recording started...")
-	end
-end
+local fakeTouch = Instance.new("Frame", ScreenGui)
+fakeTouch.Size = UDim2.new(0, 20, 0, 20)
+fakeTouch.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+fakeTouch.BackgroundTransparency = 0.3
+fakeTouch.Visible = false
 
-local function Replay(loop)
-	if replaying or #clicks == 0 then return end
-	replaying = true
-	loopReplay = loop or false
-	print("Replaying clicks...")
-	local function playOnce()
-		for i, click in ipairs(clicks) do
-			local delayTime = click.time - clicks[1].time
-			task.delay(delayTime, function()
-				if click.gui then
-					print("[Replay] Pressing GUI:", click.gui.Name)
-					pcall(function() click.gui:Activate() end)
-				elseif click.part then
-					print("[Replay] Clicking part:", click.part.Name)
-					if ClickRemote then
-						pcall(function()
-							ClickRemote:FireServer(click.part)
-						end)
-					end
-				else
-					print("[Replay] Empty click")
-				end
-			end)
-		end
-		task.delay(clicks[#clicks].time - clicks[1].time + 0.5, function()
-			if loopReplay then
-				playOnce()
-			else
-				replaying = false
-				print("Replay finished.")
-			end
-		end)
-	end
-	playOnce()
-end
-
-local function StopReplay()
-	loopReplay = false
-	replaying = false
-	print("Replay stopped.")
-end
-
+-- Record mouse/touch moves
 RunService.RenderStepped:Connect(function()
-	if recording then
-		local elapsed = math.floor(tick() - startTime)
-		TimerLabel.Text = "Timer: " .. elapsed .. "s"
-	else
-		TimerLabel.Text = "Timer: 0s"
-	end
+    if recording then
+        local pos = UserInputService:GetMouseLocation()
+        table.insert(actions, {time = tick(), type = "move", position = pos})
+    end
 end)
 
+-- Record inputs
+UserInputService.InputBegan:Connect(function(input, gp)
+    if not recording then return end
+    local pos = UserInputService:GetMouseLocation()
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        table.insert(actions, {time = tick(), type = "click", position = pos, part = mouse.Target})
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        table.insert(actions, {time = tick(), type = "touchStart", position = input.Position})
+    elseif input.UserInputType == Enum.UserInputType.Keyboard then
+        table.insert(actions, {time = tick(), type = "keyDown", key = input.KeyCode})
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gp)
+    if not recording then return end
+    if input.UserInputType == Enum.UserInputType.Touch then
+        table.insert(actions, {time = tick(), type = "touchEnd", position = input.Position})
+    elseif input.UserInputType == Enum.UserInputType.Keyboard then
+        table.insert(actions, {time = tick(), type = "keyUp", key = input.KeyCode})
+    end
+end)
+
+-- Toggle Recording
+local function ToggleRecording()
+    if recording then
+        recording = false
+        RecordBtn.Text = "Start Recording"
+        print("Stopped recording. Actions:", #actions)
+    else
+        actions = {}
+        recording = true
+        startTime = tick()
+        RecordBtn.Text = "Stop Recording"
+        print("Recording started...")
+    end
+end
+
+-- Replay (infinite loop until stopped)
+local function Replay()
+    if replaying or #actions == 0 then return end
+    replaying = true
+    fakeCursor.Visible = true
+
+    local function playOnce()
+        for _, action in ipairs(actions) do
+            local delayTime = action.time - actions[1].time
+            task.delay(delayTime, function()
+                if not replaying then return end
+
+                if action.type == "move" then
+                    fakeCursor.Position = UDim2.fromOffset(action.position.X, action.position.Y)
+                elseif action.type == "click" then
+                    fakeCursor.Position = UDim2.fromOffset(action.position.X, action.position.Y)
+                    if action.part then
+                        pcall(function() ClickRemote:FireServer(action.part) end)
+                    end
+                elseif action.type == "touchStart" then
+                    fakeTouch.Visible = true
+                    fakeTouch.Position = UDim2.fromOffset(action.position.X, action.position.Y)
+                elseif action.type == "touchEnd" then
+                    fakeTouch.Visible = false
+                elseif action.type == "keyDown" then
+                    print("[Replay] Key down:", action.key.Name)
+                elseif action.type == "keyUp" then
+                    print("[Replay] Key up:", action.key.Name)
+                end
+            end)
+        end
+
+        task.delay(actions[#actions].time - actions[1].time + 0.5, function()
+            if replaying then
+                playOnce() -- 🔁 loop forever
+            end
+        end)
+    end
+
+    playOnce()
+end
+
+-- Stop replay
+local function StopReplay()
+    replaying = false
+    fakeCursor.Visible = false
+    fakeTouch.Visible = false
+    print("Replay stopped.")
+end
+
+-- Timer
+RunService.RenderStepped:Connect(function()
+    if recording then
+        TimerLabel.Text = "Timer: " .. math.floor(tick() - startTime) .. "s"
+    else
+        TimerLabel.Text = "Timer: 0s"
+    end
+end)
+
+-- Button events
 RecordBtn.MouseButton1Click:Connect(ToggleRecording)
-ReplayBtn.MouseButton1Click:Connect(function() Replay(true) end)
+ReplayBtn.MouseButton1Click:Connect(Replay)
 StopBtn.MouseButton1Click:Connect(StopReplay)
+
