@@ -1,254 +1,244 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-
+local VirtualUser = game:GetService("VirtualUser")
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
 
-local recording, replaying, loopReplay = false, false, false
+local recording, replaying = false, false
 local clicks, startTime = {}, 0
 local savedMacros = {}
-
+local replaySpeed = 1
+local loopCount = 0
+local currentLoop = 0
 local ClickRemote = ReplicatedStorage:FindFirstChild("ClickRemote")
-if not ClickRemote then
-    warn("ClickRemote not found in ReplicatedStorage")
-end
-
-local isMinimized, isFullscreen = false, false
-local normalSize = UDim2.new(0,220,0,160)
-local normalPos = UDim2.new(0.05,0,0.2,0)
-
-local ScreenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-ScreenGui.Name = "MacroGui"
-
-local Frame = Instance.new("Frame", ScreenGui)
-Frame.Size = normalSize
-Frame.Position = normalPos
-Frame.BackgroundColor3 = Color3.fromRGB(35,35,35)
-Frame.Active = true
-Frame.Draggable = true
-Frame.BorderSizePixel = 0
-
-local TopBar = Instance.new("Frame", Frame)
-TopBar.Size = UDim2.new(1,0,0,25)
-TopBar.Position = UDim2.new(0,0,0,0)
-TopBar.BackgroundColor3 = Color3.fromRGB(50,50,50)
-
-local TitleLabel = Instance.new("TextLabel", TopBar)
-TitleLabel.Size = UDim2.new(0.6,0,1,0)
-TitleLabel.Position = UDim2.new(0,5,0,0)
-TitleLabel.Text = "Macro Recorder"
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.TextColor3 = Color3.new(1,1,1)
-TitleLabel.Font = Enum.Font.SourceSansBold
-TitleLabel.TextSize = 14
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-local function makeControlBtn(symbol,posScale)
-    local btn = Instance.new("TextButton", TopBar)
-    btn.Size = UDim2.new(0,25,1,0)
-    btn.Position = UDim2.new(posScale,0,0,0)
-    btn.Text = symbol
-    btn.Font = Enum.Font.SourceSansBold
-    btn.TextSize = 14
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.BackgroundColor3 = Color3.fromRGB(150,150,150)
-    return btn
-end
-
-local MinBtn = makeControlBtn("–",0.7)
-local FullBtn = makeControlBtn("⛶",0.8)
-local CloseBtn = makeControlBtn("✕",0.9)
-
-local ContentFrame = Instance.new("Frame", Frame)
-ContentFrame.Size = UDim2.new(1,0,1,-25)
-ContentFrame.Position = UDim2.new(0,0,0,25)
-ContentFrame.BackgroundTransparency = 1
-
-local function makeBtn(text,y,color)
-    local btn = Instance.new("TextButton", ContentFrame)
-    btn.Size = UDim2.new(1,-10,0,28)
-    btn.Position = UDim2.new(0,5,0,y)
-    btn.Text = text
-    btn.BackgroundColor3 = color
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.Font = Enum.Font.SourceSansBold
-    btn.TextSize = 14
-    return btn
-end
-
-local RecordBtn = makeBtn("Start Recording",5, Color3.fromRGB(80,80,80))
-local ReplayBtn = makeBtn("Replay",40, Color3.fromRGB(80,80,80))
-local StopBtn = makeBtn("Stop Replay",75, Color3.fromRGB(150,50,50))
-local SaveBtn = makeBtn("Save Macro",110, Color3.fromRGB(60,120,60))
-
-local TimerLabel = Instance.new("TextLabel", ContentFrame)
-TimerLabel.Size = UDim2.new(1,-10,0,20)
-TimerLabel.Position = UDim2.new(0,5,1,-25)
-TimerLabel.BackgroundTransparency = 1
-TimerLabel.Text = "Timer: 0s"
-TimerLabel.TextColor3 = Color3.new(1,1,1)
-
-local NotifFrame = Instance.new("Frame", ScreenGui)
-NotifFrame.Size = UDim2.new(0,300,0,60)
-NotifFrame.Position = UDim2.new(0.7,0,0.1,0)
-NotifFrame.BackgroundColor3 = Color3.fromRGB(25,25,25)
-NotifFrame.Visible = false
-NotifFrame.BorderSizePixel = 0
-
-local NotifLabel = Instance.new("TextLabel", NotifFrame)
-NotifLabel.Size = UDim2.new(1,-10,1,-10)
-NotifLabel.Position = UDim2.new(0,5,0,5)
-NotifLabel.BackgroundTransparency = 1
-NotifLabel.TextColor3 = Color3.new(1,1,1)
-NotifLabel.TextWrapped = true
-NotifLabel.Text = "..."
+local statusLabel
 
 local function ShowNotification(text)
-    NotifLabel.Text = text
-    NotifFrame.Visible = true
-    task.delay(2,function() NotifFrame.Visible = false end)
+    if statusLabel then
+        statusLabel.Text = "Status: " .. text
+    end
 end
-
-local PreviewGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-PreviewGui.Name = "MacroPreview"
-
-local PreviewFrame = Instance.new("ScrollingFrame", PreviewGui)
-PreviewFrame.Size = UDim2.new(0,250,0,400)
-PreviewFrame.Position = UDim2.new(0.75,0,0.05,0)
-PreviewFrame.BackgroundColor3 = Color3.fromRGB(30,30,30)
-PreviewFrame.CanvasSize = UDim2.new(0,0,0,0)
-PreviewFrame.ScrollBarThickness = 8
-PreviewFrame.Active = true
-PreviewFrame.Draggable = true
-
-local UIList = Instance.new("UIListLayout", PreviewFrame)
-UIList.SortOrder = Enum.SortOrder.LayoutOrder
-UIList.Padding = UDim.new(0,2)
-UIList.HorizontalAlignment = Enum.HorizontalAlignment.Left
-
-local function AddPreviewAction(text)
-    local label = Instance.new("TextLabel", PreviewFrame)
-    label.Size = UDim2.new(1,-10,0,20)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = Color3.new(1,1,1)
-    label.Text = text
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.LayoutOrder = #PreviewFrame:GetChildren()
-    PreviewFrame.CanvasSize = UDim2.new(0,0,0,UIList.AbsoluteContentSize.Y + 10)
-    PreviewFrame.CanvasPosition = Vector2.new(0, UIList.AbsoluteContentSize.Y)
-end
-
-MinBtn.MouseButton1Click:Connect(function()
-    if not isMinimized then
-        Frame.Size = UDim2.new(0,200,0,25)
-        ContentFrame.Visible = false
-        isMinimized = true
-    else
-        Frame.Size = normalSize
-        ContentFrame.Visible = true
-        isMinimized = false
-    end
-end)
-
-FullBtn.MouseButton1Click:Connect(function()
-    if not isFullscreen then
-        Frame.Position = UDim2.new(0,0,0,0)
-        Frame.Size = UDim2.new(1,0,1,0)
-        isFullscreen = true
-    else
-        Frame.Position = normalPos
-        Frame.Size = normalSize
-        isFullscreen = false
-    end
-end)
-
-CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
-    PreviewGui:Destroy()
-end)
-
-RunService.RenderStepped:Connect(function()
-    if recording then
-        TimerLabel.Text = "Timer: "..math.floor(tick()-startTime).."s"
-    else
-        TimerLabel.Text = "Timer: 0s"
-    end
-end)
 
 local function recordAction(actionType, data)
-    table.insert(clicks,{time=tick(), type=actionType, data=data})
-    ShowNotification("Recorded: "..actionType..(data and (" "..tostring(data)) or ""))
-    AddPreviewAction(string.format("[%.2fs] %s: %s", tick()-startTime, actionType, data or ""))
+    table.insert(clicks, {
+        time = os.clock() - startTime,
+        type = actionType,
+        data = data
+    })
 end
 
-RecordBtn.MouseButton1Click:Connect(function()
+local function toggleRecording()
     if recording then
         recording = false
-        RecordBtn.Text = "Start Recording"
-        ShowNotification("Recording stopped. Total actions: "..#clicks)
+        ShowNotification("Idle (Recorded " .. #clicks .. " actions)")
     else
         clicks = {}
         recording = true
-        startTime = tick()
-        RecordBtn.Text = "Stop Recording"
-        ShowNotification("Recording started")
+        startTime = os.clock()
+        ShowNotification("Recording")
+    end
+end
+
+local function replayMacro()
+    if replaying or #clicks == 0 then return end
+    replaying = true
+    currentLoop = 0
+    task.spawn(function()
+        repeat
+            currentLoop += 1
+            ShowNotification("Replaying (Loop " .. currentLoop .. (loopCount == 0 and "/∞)" or "/" .. loopCount .. ")"))
+            local lastTime = 0
+            for _, action in ipairs(clicks) do
+                if not replaying then break end
+                local waitTime = (action.time - lastTime) / replaySpeed
+                if waitTime > 0 then
+                    local waited = task.wait(waitTime)
+                    if not replaying then break end
+                end
+                lastTime = action.time
+                if action.type == "Click" and ClickRemote then
+                    if action.data and action.data.Parent then
+                        pcall(function() ClickRemote:FireServer(action.data) end)
+                    end
+                elseif action.type == "Key" then
+                end
+            end
+        until not replaying or (loopCount > 0 and currentLoop >= loopCount)
+        replaying = false
+        ShowNotification("Idle (Replay finished)")
+    end)
+end
+
+local function cancelReplay()
+    if replaying then
+        replaying = false
+        ShowNotification("Idle (Replay canceled)")
+    end
+end
+
+local function saveMacro(slot)
+    if #clicks == 0 then
+        ShowNotification("No macro to save")
+        return
+    end
+    savedMacros[slot] = table.clone(clicks)
+    ShowNotification("Saved slot " .. slot)
+end
+
+local function loadMacro(slot)
+    if not savedMacros[slot] then
+        ShowNotification("No macro in slot " .. slot)
+        return
+    end
+    clicks = table.clone(savedMacros[slot])
+    ShowNotification("Loaded slot " .. slot .. " (" .. #clicks .. " actions)")
+end
+
+local function clearMacro()
+    clicks = {}
+    ShowNotification("Idle (Macro cleared)")
+end
+
+local function setReplaySpeed(speed)
+    replaySpeed = speed
+    ShowNotification("Replay speed x" .. speed)
+end
+
+task.spawn(function()
+    while task.wait(60) do
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
     end
 end)
 
 mouse.Button1Down:Connect(function()
-    if recording and mouse then
+    if recording then
         local target = mouse.Target
-        if target then
-            recordAction("Click", target.Name)
-        else
-            recordAction("Click", "Empty space")
-        end
+        recordAction("Click", target)
     end
 end)
 
 UserInputService.InputBegan:Connect(function(input, processed)
     if recording and not processed then
         if input.UserInputType == Enum.UserInputType.Keyboard then
-            recordAction("Key", input.KeyCode.Name)
-        elseif input.UserInputType == Enum.UserInputType.Touch then
-            recordAction("TouchStart", "Position: "..tostring(input.Position))
+            recordAction("Key", input.KeyCode)
+        elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+            recordAction("Click", nil)
         end
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if recording and input.UserInputType == Enum.UserInputType.Touch then
-        recordAction("Drag", "Position: "..tostring(input.Position))
-    end
+local screenGui = Instance.new("ScreenGui")
+screenGui.IgnoreGuiInset = true
+screenGui.ResetOnSpawn = false
+pcall(function()
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+end)
+if not screenGui.Parent then
+    screenGui.Parent = game:GetService("CoreGui")
+end
+
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(0, 420, 0, 330)
+mainFrame.Position = UDim2.new(0.5, -210, 0.5, -165)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
+local stroke = Instance.new("UIStroke", mainFrame)
+stroke.Color = Color3.fromRGB(100, 100, 100)
+stroke.Thickness = 1.5
+
+local titleBar = Instance.new("Frame", mainFrame)
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+titleBar.BorderSizePixel = 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+
+local titleText = Instance.new("TextLabel", titleBar)
+titleText.Size = UDim2.new(1, -60, 1, 0)
+titleText.Position = UDim2.new(0, 10, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "Macro Recorder Pro"
+titleText.TextColor3 = Color3.new(1, 1, 1)
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = 16
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+
+statusLabel = Instance.new("TextLabel", mainFrame)
+statusLabel.Size = UDim2.new(1, -20, 0, 20)
+statusLabel.Position = UDim2.new(0, 10, 1, -25)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: Idle"
+statusLabel.TextColor3 = Color3.new(1, 1, 1)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 14
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local closeButton = Instance.new("TextButton", titleBar)
+closeButton.Size = UDim2.new(0, 30, 1, 0)
+closeButton.Position = UDim2.new(1, -30, 0, 0)
+closeButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.new(1, 1, 1)
+closeButton.Font = Enum.Font.GothamBold
+closeButton.TextSize = 14
+Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 8)
+closeButton.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
 end)
 
-ReplayBtn.MouseButton1Click:Connect(function()
-    if #clicks == 0 then return end
-    replaying = true
-    loopReplay = true
-    for _,action in ipairs(clicks) do
-        if not replaying then break end
-        if action.type=="Click" and ClickRemote then
-            local part = workspace:FindFirstChild(action.data)
-            if part then
-                pcall(function() ClickRemote:FireServer(part) end)
-            end
-        end
-        task.wait(0.1)
-    end
+local minimizeButton = Instance.new("TextButton", titleBar)
+minimizeButton.Size = UDim2.new(0, 30, 1, 0)
+minimizeButton.Position = UDim2.new(1, -65, 0, 0)
+minimizeButton.BackgroundColor3 = Color3.fromRGB(60, 120, 200)
+minimizeButton.Text = "_"
+minimizeButton.TextColor3 = Color3.new(1, 1, 1)
+minimizeButton.Font = Enum.Font.GothamBold
+minimizeButton.TextSize = 14
+Instance.new("UICorner", minimizeButton).CornerRadius = UDim.new(0, 8)
+local minimized = false
+minimizeButton.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    mainFrame.Size = minimized and UDim2.new(0, 420, 0, 40) or UDim2.new(0, 420, 0, 330)
 end)
 
-StopBtn.MouseButton1Click:Connect(function()
-    loopReplay = false
-    replaying = false
-end)
+local container = Instance.new("Frame", mainFrame)
+container.Size = UDim2.new(0.5, -15, 1, -60)
+container.Position = UDim2.new(0, 10, 0, 40)
+container.BackgroundTransparency = 1
+local uiList = Instance.new("UIListLayout", container)
+uiList.Padding = UDim.new(0, 6)
+uiList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+uiList.VerticalAlignment = Enum.VerticalAlignment.Top
 
-SaveBtn.MouseButton1Click:Connect(function()
-    if #clicks>0 then
-        local name = "Macro_"..tostring(#savedMacros+1)
-        savedMacros[name] = clicks
-        ShowNotification("Macro saved: "..name)
-    end
-end)
+local function createButton(name, color, callback)
+    local btn = Instance.new("TextButton", container)
+    btn.Size = UDim2.new(1, 0, 0, 28)
+    btn.BackgroundColor3 = color
+    btn.Text = name
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+createButton("Start/Stop Recording", Color3.fromRGB(40, 120, 200), toggleRecording)
+createButton("Replay Macro", Color3.fromRGB(60, 180, 75), replayMacro)
+createButton("Cancel Replay", Color3.fromRGB(200, 100, 60), cancelReplay)
+createButton("Clear Macro", Color3.fromRGB(200, 60, 60), clearMacro)
+
+for i = 1, 3 do
+    createButton("Save Slot " .. i, Color3.fromRGB(90, 90, 200), function() saveMacro(i) end)
+    createButton("Load Slot " .. i, Color3.fromRGB(120, 120, 220), function() loadMacro(i) end)
+end
+
+createButton("Speed x0.5", Color3.fromRGB(100, 160, 200), function() setReplaySpeed(0.5) end)
+createButton("Speed x1", Color3.fromRGB(100, 200, 100), function() setReplaySpeed(1) end)
+createButton("Speed x2", Color3.fromRGB(200, 160, 100), function() setReplaySpeed(2) end)
