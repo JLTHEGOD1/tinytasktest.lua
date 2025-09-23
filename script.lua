@@ -1,6 +1,3 @@
-Roblox Macro Suite w/ Notification System + File Browser Controls
-Note: Requires executor APIs for file handling & input simulation
-
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
@@ -187,3 +184,4 @@ UIS.InputBegan:Connect(function(input, processed)
         table.insert(macroData, step)
     end
 end)
+
